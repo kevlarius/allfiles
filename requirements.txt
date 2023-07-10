@@ -1,0 +1,6 @@
+alembic==1.11.1
+SQLAlchemy==2.0.18
+psycopg2==2.9.6
+# for development:
+black==23.3.0
+isort==5.12.0
