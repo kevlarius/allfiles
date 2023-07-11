@@ -1,9 +1,9 @@
-from typing import Dict, List
+from typing import Dict, List, Union
 
 from sqlalchemy import text
-from sqlalchemy.orm import Query, Session
+from sqlalchemy.orm import Query, Session, scoped_session
 
-from app.models import Base, File
+from app.models import Base, ExifData, File
 
 
 class BaseService:
@@ -13,7 +13,7 @@ class BaseService:
 
     model: Base = None
 
-    def __init__(self, session: Session):
+    def __init__(self, session: Union[Session, scoped_session]):
         self.session = session
 
     def list(self) -> Query:
@@ -32,6 +32,16 @@ class BaseService:
     def get(self, entity_id):
         return self.list().filter(self.model.id == entity_id).first()
 
+    def create(self, data=None):
+        if data is None:
+            data = {}
+        obj = self.model()
+
+        obj.update(data=data)
+        self.session.add(obj)
+        self.session.flush()
+        return obj
+
     def bulk_create(self, data: List[Dict] = None):
         if data is None:
             data = []
@@ -48,8 +58,8 @@ class BaseService:
 
         return objects
 
-    def remove_all(self):
-        self.session.execute(text(f"TRUNCATE TABLE {self.model.__tablename__};"))
+    # def remove_all(self):
+    #     self.session.execute(text(f"TRUNCATE TABLE {self.model.__tablename__};"))
 
     # def hard_delete_by_id(self, id):
     #     """
@@ -84,26 +94,7 @@ class BaseService:
     #         )
     #     return query.filter(or_(*filter_conditions))
     #
-    # def create(self, data=None, user_id=None):
-    #     """
-    #     Create a new object and insert it into the database.
-    #
-    #     :param data: The data to populate the object withs
-    #     :param str user_id: Optional parameter to filter objects by `user_id`
-    #     :return: The newly create object
-    #     """
-    #     if data is None:
-    #         data = {}
-    #     obj = self.model()
-    #     obj.id = uuid.uuid4()
-    #
-    #     if user_id:
-    #         obj.user_id = user_id
-    #
-    #     obj.update(data=data)
-    #     self.session.add(obj)
-    #     self.session.flush()
-    #     return obj
+
     #
 
     #
@@ -286,3 +277,15 @@ class BaseService:
 
 class FileService(BaseService):
     model = File
+
+    def remove_all(self):
+        query = self.list()
+        query.delete(synchronize_session=False)
+
+
+class ExifService(BaseService):
+    model = ExifData
+
+    def remove_all(self):
+        query = self.list()
+        query.delete(synchronize_session=False)

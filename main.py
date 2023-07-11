@@ -5,69 +5,17 @@ import http
 import io
 import logging
 import os.path
-import time
 from datetime import datetime
-from typing import BinaryIO
 
-from app.models import File
-from app.service import FileService
-from app.tools import SessionHandler, close_session, get_session
+from exif import Image
 
-BUFFER_SIZE = 64 * 1024 * 1024
-
+from app.service import ExifService, FileService
+from app.tools import ExifGetter, calculate_hash, close_session, get_session
 
 logging.basicConfig(
     format="[%(levelname)s] %(asctime)s %(message)s", level=logging.DEBUG
 )
 logger = logging.getLogger(__name__)
-
-
-def time_it(func, *args):
-    start_time = time.time()
-    result = func(*args)
-    elapsed = time.time() - start_time
-    print(f"Calculated in {elapsed} seconds.")
-    return result
-
-
-def get_hash_sum_instance(mode: str):
-    if mode == "sha1":
-        return hashlib.sha1()
-    elif mode == "sha256":
-        return hashlib.sha256()
-    elif mode == "sha512":
-        return hashlib.sha512()
-    elif mode == "md5":
-        return hashlib.md5()
-    raise Exception(f"Mode {mode} is not supported.")
-
-
-def calc_hash_sum(file_obj: BinaryIO, mode: str):
-    hash_sum_obj = get_hash_sum_instance(mode)
-    while True:
-        data = file_obj.read(BUFFER_SIZE)
-        if not data:
-            break
-        hash_sum_obj.update(data)
-
-    return hash_sum_obj.digest()
-
-
-def calculate(path: str, mode: str, verbose: bool):
-    if not os.path.exists(path):
-        print(f"Specified path does not exist.")
-        return
-
-    if not os.path.isfile(path):
-        print(f"Specified path does not exist.")
-        return
-
-    with open(path, "rb") as file_obj:
-        if verbose:
-            result = time_it(calc_hash_sum, file_obj, mode)
-        else:
-            result = calc_hash_sum(file_obj, mode)
-    print(binascii.hexlify(result))
 
 
 class FolderProcessor:
@@ -79,11 +27,13 @@ class FolderProcessor:
         self.folder = folder
         self._session = get_session()
         self.file_service = FileService(self._session)
+        self.exif_service = ExifService(self._session)
         self._files_buffer = []
 
     def process(self):
         self._check_folder()
         self._remove_files_from_db()
+        self._remove_exif_from_db()
         processed = 0
         try:
             for file_path in self._file_path_generator():
@@ -104,6 +54,9 @@ class FolderProcessor:
 
     def _remove_files_from_db(self):
         self.file_service.remove_all()
+
+    def _remove_exif_from_db(self):
+        self.exif_service.remove_all()
 
     def _check_folder(self):
         if not os.path.exists(self.folder):
@@ -130,6 +83,9 @@ class FolderProcessor:
             "created_at": datetime.fromtimestamp(os.path.getctime(full_file_path)),
             "edited_at": datetime.fromtimestamp(os.path.getmtime(full_file_path)),
         }
+        self._add_hash_sums(full_file_path, data)
+        if self._file_can_contain_exif(extension):
+            self._add_exif_metadata(full_file_path, data)
         self._files_buffer.append(data)
 
         # flush to DB if buffer is full
@@ -155,10 +111,35 @@ class FolderProcessor:
         self.file_service.bulk_create(data=self._files_buffer)
         self._files_buffer = []
 
+    @staticmethod
+    def _add_hash_sums(full_file_path, file_data):
+        sha1, crc32 = calculate_hash(full_file_path)
+        file_data["crc32"] = crc32
+        file_data["sha1"] = sha1
+
+    def count_files(self):
+        total = 0
+        for dir_path, _, filenames in os.walk(self.folder, topdown=False):
+            total += len(filenames)
+        return total
+
+    @staticmethod
+    def _file_can_contain_exif(extension):
+        return extension in ("jpg", "jpeg")
+
+    def _add_exif_metadata(self, full_file_path, data):
+        exif_data = ExifGetter(full_file_path).get_exif_data()
+        if exif_data:
+            exif_entry = self.exif_service.create(exif_data)
+            data["exif_id"] = exif_entry.id
+
 
 def run_app(folder):
     processor = FolderProcessor(folder)
     processor.process()
+    # files_count = processor.count_files()
+    # data = get_exif_data("D:\\DCIM\\100NIKON\\DSCN2107.JPG")
+    # print(data)
 
 
 if __name__ == "__main__":
