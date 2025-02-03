@@ -1,15 +1,9 @@
 import sqlalchemy as db
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
-
-Base = declarative_base()
+from sqlalchemy.orm import relationship, DeclarativeBase
 
 
-class UpdateMixin:
-    """
-    Provides convenience method for updating a Python object with a dictionary
-    """
-
+class Base(DeclarativeBase):
     def update(self, data):
         """
         Update an object's properties with the dictionary passed in
@@ -19,7 +13,7 @@ class UpdateMixin:
                 setattr(self, key, value)
 
 
-class File(Base, UpdateMixin):
+class File(Base):
     __tablename__ = "file"
 
     id = db.Column(
@@ -50,8 +44,16 @@ class File(Base, UpdateMixin):
     )
     exif = relationship("ExifData", foreign_keys=[exif_id], backref="file")
 
+    audio_meta_id = db.Column(
+        db.Integer,
+        db.ForeignKey("audiometa.id", name="audio_meta_id"),
+        nullable=True,
+        index=True,
+    )
+    audio_meta = relationship("AudioMeta", foreign_keys=[audio_meta_id], backref="file")
 
-class ExifData(Base, UpdateMixin):
+
+class ExifData(Base):
     __tablename__ = "exif"
 
     id = db.Column(
@@ -79,3 +81,21 @@ class ExifData(Base, UpdateMixin):
     orientation = db.Column(db.String, nullable=True)
     software = db.Column(db.String, nullable=True)
     max_aperture_value = db.Column(db.String, nullable=True)
+
+
+class AudioMeta(Base):
+    __tablename__ = "audiometa"
+
+    id = db.Column(
+        db.Integer(), db.Identity(always=False), primary_key=True, unique=True
+    )
+    title = db.Column(db.String, nullable=True)
+    artist = db.Column(db.String, nullable=True)
+    album = db.Column(db.String, nullable=True)
+    album_artist = db.Column(db.String, nullable=True)
+    track_number = db.Column(db.String, nullable=True)
+    year = db.Column(db.String, nullable=True)
+    genre = db.Column(db.String, nullable=True)
+    sampling_frequency = db.Column(db.String, nullable=True)
+    bit_rate = db.Column(db.String, nullable=True)
+    duration = db.Column(db.String, nullable=True)

@@ -1,9 +1,10 @@
-from typing import Dict, List, Union
+from typing import Dict, List
 
-from sqlalchemy import text
-from sqlalchemy.orm import Query, Session, scoped_session
+from sqlalchemy import select, delete
+from sqlalchemy.orm import Session
 
-from app.models import Base, ExifData, File
+from app.models import Base, ExifData, File, AudioMeta
+from app.tools import get_engine
 
 
 class BaseService:
@@ -13,33 +14,21 @@ class BaseService:
 
     model: Base = None
 
-    def __init__(self, session: Union[Session, scoped_session]):
-        self.session = session
+    def __init__(self):
+        pass
 
-    def list(self) -> Query:
+    def list(self):
         """
         Get a list of objects from the database
         """
-        query = self.session.query(self.model)
-        return query
-
-    def count(self):
-        """
-        Get the count of objects from a database
-        """
-        return self.list().count()
-
-    def get(self, entity_id):
-        return self.list().filter(self.model.id == entity_id).first()
+        with Session(get_engine()) as session:
+            return session.scalars(select(self.model))
 
     def create(self, data=None):
         if data is None:
             data = {}
         obj = self.model()
-
         obj.update(data=data)
-        self.session.add(obj)
-        self.session.flush()
         return obj
 
     def bulk_create(self, data: List[Dict] = None):
@@ -53,24 +42,27 @@ class BaseService:
             obj.update(data=item)
             objects.append(obj)
 
-        self.session.bulk_save_objects(objects)
-        self.session.flush()
+        with Session(get_engine()) as session:
+            session.add_all(objects)
+            session.commit()
 
-        return objects
+    def remove_all(self):
+        query = self.list()
+        query.delete(synchronize_session=False)
 
     # def remove_all(self):
     #     self.session.execute(text(f"TRUNCATE TABLE {self.model.__tablename__};"))
 
-    # def hard_delete_by_id(self, id):
-    #     """
-    #     Hard deletes an object by it's id with synchronize_session=False
-    #     :param id:
-    #     :return:
-    #     """
-    #     # we want to list all even inactive
-    #     self.list_all(only_active=False).filter(self.model.id == id).delete(
-    #         synchronize_session=False
-    #     )
+    def delete_by_id(self, id_):
+        """
+        Hard deletes an object by it's id with synchronize_session=False
+        :param id:
+        :return:
+        """
+        # we want to list all even inactive
+        self.list().filter(self.model.id == id_).delete(
+            synchronize_session=False
+        )
     #
     # def search_by_fields(self, fields, search_query: str, query: Query = None) -> Query:
     #     """
@@ -278,14 +270,32 @@ class BaseService:
 class FileService(BaseService):
     model = File
 
-    def remove_all(self):
-        query = self.list()
-        query.delete(synchronize_session=False)
+    def get_by_params(self, session, location):
+        return session.scalar(select(File).where(File.location == location))
+
+    def get_by_location_begin(self, session, location_begin):
+        return session.scalars(select(File).where(File.location.istartswith(location_begin, escape='/')))
+
+    def remove_file(self, file_entry: File):
+        if file_entry.exif_id is not None:
+            self.session(ExifData).filter(ExifData.id == file_entry.exif_id).delete(synchronize_session=False)
+        if file_entry.audio_meta_id is not None:
+            self.session(AudioMeta).filter(AudioMeta.id == file_entry.audio_meta_id).delete(synchronize_session=False)
+        self.delete_by_id(file_entry.id)
+
+    def remove_file2(self, file_entry: File):
+        statements = []
+        if file_entry.exif_id is not None:
+            statements.append(delete(ExifData).where(ExifData.id == file_entry.exif_id))
+        if file_entry.audio_meta_id is not None:
+            statements.append(delete(AudioMeta).where(AudioMeta.id == file_entry.audio_meta_id))
+        statements.append(delete(File).where(File.id == file_entry.id))
+        self.session.execute(statements, execution_options={"synchronize_session": False})
 
 
 class ExifService(BaseService):
     model = ExifData
 
-    def remove_all(self):
-        query = self.list()
-        query.delete(synchronize_session=False)
+
+class AudioMetaService(BaseService):
+    model = AudioMeta
